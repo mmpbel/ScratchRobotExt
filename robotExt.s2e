@@ -1,0 +1,16 @@
+{ "extensionName": "Simpro Extension",
+    "extensionPort": 12345,
+    "blockSpecs": [
+        [" ", "set relay %m.onoff", "relay", "off"],
+        [" ", "set led index %n bightness %n", "led", 0, 0],
+        [" ", "set buzzer tone %n time %n", "buzzer", 0, 0],
+        [" ", "move %m.side %n", "move", "both", 0],
+        ["r", "temperature", "temperature"],
+        ["r", "ultrasonic sensor", "distance"],
+        ["b", "move sensor", "move_sensor"],
+    ],
+    "menus": {
+        "onoff": ["on", "off"],
+        "side": ["left", "right", "both"],
+    },
+}
