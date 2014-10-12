@@ -3,38 +3,22 @@ import threading
 import http.server
 import serial
 import re
-
-'''
-        if params[0]=='poll':
-            print(time.asctime(), 'poll cmd', getTemperature())
-            s.wfile.write(bytes("\n", 'UTF-8'))
-            s.wfile.write(bytes("temperature {}\n".format(getTemperature()), 'UTF-8'))
-            s.wfile.write(bytes("distance {}\n".format(getDistance()), 'UTF-8'))
-            s.wfile.write(bytes("move_sensor {}\n".format(getMoveDetector()), 'UTF-8'))
-        elif params[0]=='turnOn':
-            print(time.asctime(), 'turnOn cmd')
-            ser.write(bytearray("12",'ascii'))
-        elif params[0]=='turnOff':
-            print(time.asctime(), 'turnOff cmd')
-            ser.write(bytearray("qw",'ascii'))
-'''
+import queue
 
 HOST_NAME = 'localhost'
 PORT_NUMBER = 12345
 
 SENSOR_SIZE = 5
-sensors = [0]
 
-waitId = 0
+waitId = -1
 
 # sensors
 from enum import Enum
 
 #@unique
 class Sensor(Enum):
-    WAIT_SENSOR = 0
-    TEMP_SENSOR = 1
-    DISTACE_SENSOR = 2
+    TEMP_SENSOR = 0
+    DISTACE_SENSOR = 1
 
 class Cmd(Enum):
     led = 'e'
@@ -51,13 +35,12 @@ class MoveDir(Enum):
     left = Cmd.left.value
     right = Cmd.right.value
 
-ser=serial.Serial()
-cmdQueue = Queue()
+ser=serial.Serial(baudrate=9600)
+cmdQueue = queue.Queue()
 
 class robotThread (threading.Thread):
-    global sensors
     global SENSOR_SIZE
-
+    
     def __init__(self, threadID, name, counter):
         threading.Thread.__init__(self)
         self.threadID = threadID
@@ -66,8 +49,35 @@ class robotThread (threading.Thread):
 
     def run(self):
 
-        global CmdQueue
+        global cmdQueue
         global waitId
+
+        def relay_cmd(param):
+            if 0 == param[1]:
+                print(time.asctime(), 'relay_cmd off')
+                ser.write(bytearray("qw",'ascii'))
+            else:
+                print(time.asctime(), 'relay_cmd on')
+                ser.write(bytearray("12",'ascii'))
+
+        def led_cmd(param):
+            print(time.asctime(), 'led_cmd {} {}'.format(param[1], param[2]))
+            ser.write(bytearray("1{}".format(param[1]),'ascii'))
+
+        def buzzer_cmd(param):
+            print(time.asctime(), 'buzzer_cmd {} {}'.format(param[1], param[2]))
+            ser.write(bytearray("2{}".format(param[1]),'ascii'))
+
+        def move_cmd(param):
+            print(time.asctime(), 'move_cmd {} {}'.format(param[1], param[2]))
+            for dir in MoveDir.__members__.items():
+                if dir[0] == param[1]:
+                    print(time.asctime(), 'dir {}{}'.format(dir[1].value, param[2]),'ascii')
+                    ser.write(bytearray("{}{}\r".format(dir[1].value, param[2]),'ascii'))
+                    break
+
+        def default_cmd(param):
+            print(time.asctime(), 'default_cmd')
 
         commands = {
             'relay': relay_cmd,
@@ -78,51 +88,32 @@ class robotThread (threading.Thread):
 
         print('Starting %s' % self.name)
 
+        ser.port = int(comPort) - 1
+        ser.timeout = 5
+        ser.open()
+
+        cmdId = -1
         while True:
             sensor_status = ser.readline()
             param_list = sensor_status.split()
-            #print(sensor_status)
+            print(sensor_status)
             if b's' == param_list[0]:
                 # if a command was finished
-                if int(param_list[1]) != sensors[0]:
-                    sensors[0] = int(param_list[1])
-                    if !CmdQueue.empty():
-                        params = CmdQueue.get()
+                if int(param_list[1]) != cmdId:
+                    if not cmdQueue.empty():
+                        cmdId = int(param_list[1])
+                        print('commad!!!!! %d' % cmdId)
+                        params = cmdQueue.get()
                         cmd_func = commands.get(params[0], default_cmd)
                         cmd_func(params)
                     else:
                         # empty command queue - reset wait ID
-                        waitId = 0
-
-
-    def relay_cmd(param):
-        if 0 == param[1]:
-            print(time.asctime(), 'relay_cmd off')
-            ser.write(bytearray("qw",'ascii'))
-        else:
-            print(time.asctime(), 'relay_cmd on')
-            ser.write(bytearray("12",'ascii'))
-
-    def led_cmd(param):
-        print(time.asctime(), 'led_cmd {} {}'.format(param[1], param[2]))
-        ser.write(bytearray("1{}".format(param[1]),'ascii'))
-
-    def buzzer_cmd(param):
-        print(time.asctime(), 'buzzer_cmd {} {}'.format(param[1], param[2]))
-        ser.write(bytearray("2{}".format(param[1]),'ascii'))
-
-    def move_cmd(param):
-        print(time.asctime(), 'move_cmd {} {}'.format(param[1], param[2]))
-        for dir in MoveDir.__members__.items():
-            if dir[0] == param[1]:
-                print(time.asctime(), 'dir {}{}'.format(dir[1].value, param[2]),'ascii')
-                ser.write(bytearray("{}{}\r".format(dir[1].value, param[2]),'ascii'))
-                break
-
-    def default_cmd(param):
-        print(time.asctime(), 'default_cmd')
+                        print('reset wait')
+                        waitId = -1
 
     def getSensor(id):
+        sensors = [0]
+
         if len(sensors) == SENSOR_SIZE:
             return sensors[id]
         else:
@@ -133,7 +124,7 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(s):
     
         def poll_cmd(param):
-            
+
             def getTemperature():
             #    ser.flushInput()
             #    ser.write(bytearray('T','ascii'))
@@ -164,9 +155,11 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
 
             # handle waiting
             global waitId
-            if waitId > 0:
+            if waitId >= 0:
                 print(time.asctime(), '_busy {}'.format(waitId))
                 s.wfile.write(bytes("_busy {}\n".format(waitId), 'UTF-8'))
+
+        global waitId
 
         """Respond to a GET request."""
         s.send_response(200)
@@ -179,10 +172,11 @@ class MyHandler(http.server.BaseHTTPRequestHandler):
         s.wfile.write(bytes("<p>You accessed path: {}</p>".format(s.path), 'UTF-8'))
         params = re.findall(r'((?<=[/ ])\w+)', s.path)
         
-        if param[0] == 'wait':
-            print(time.asctime(), 'wait_cmd {}'.format(param[1]))
-            waitId = param[1]
-        elif param[0] == 'poll':
+        if params[0] == 'wait':
+            print(time.asctime(), 'wait_cmd {}'.format(params[1]))
+            waitId = int(params[1])
+        elif params[0] == 'poll':
+            print(time.asctime(), 'poll_cmd {}'.format(waitId))
             poll_cmd(params)
         else:
             global cmdQueue
@@ -195,13 +189,9 @@ if __name__ == '__main__':
     import sys
 
     comPort = 6
-    if len(sys.argv) > 0:
+    if len(sys.argv) > 1:
         comPort = sys.argv[1]
 
-    ser.port = int(comPort) - 1
-    ser.timeout = 5
-    ser.open()
-    ser.write(bytearray("'",'ascii'))
     print(time.asctime(), 'Open COM port:{}'.format(comPort))
 
     # Create new threads
